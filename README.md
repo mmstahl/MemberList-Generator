@@ -29,7 +29,7 @@ WordPress will not automatically overwrite existing media files. To update the l
 * **Path:** `/srv/htdocs/wp-content/uploads`
 * **Action:** Transfer the new file to this directory. When prompted that the file already exists, select **Overwrite**.
 
-## 4. Update the Page Content
+## 4. Update the Page Content (one-time thing)
 Once the file is uploaded, you need to link it to the live page:
 
 1. Browse to the **Membership List** page (found under the *Members Info* menu) while logged in as an administrator.
