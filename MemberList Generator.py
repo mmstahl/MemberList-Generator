@@ -15,7 +15,7 @@ FONT_NAME_BOLD = 'Alef-Bold'
 FONT_FILE = 'Alef-Regular.ttf' 
 FONT_FILE_BOLD = 'Alef-Bold.ttf' 
 INPUT_FILE = 'pre-processing output.csv'
-OUTPUT_FILE = 'members_list_2026.pdf'
+OUTPUT_FILE = 'members_list.pdf'
 
 # Register fonts
 pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
