@@ -1,0 +1,8 @@
+pandas
+numpy
+reportlab
+arabic-reshaper
+python-bidi
+requests
+paramiko
+python-dotenv
