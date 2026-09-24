@@ -6,3 +6,4 @@ python-bidi
 requests
 paramiko
 python-dotenv
+keyring

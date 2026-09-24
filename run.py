@@ -1,137 +1,146 @@
+"""
+Yedidya Members List — standalone runner.
+
+Credentials are stored in Windows Credential Manager (via keyring).
+File paths are stored in %APPDATA%\YedidyaPortal\config.json and shown
+as defaults; press Enter to accept or type a new value to update.
+"""
 import os
 import sys
-import argparse
+import importlib.util
 import getpass
-import subprocess
-import paramiko
-from dotenv import load_dotenv
+import keyring
+
+import defaults_manager as dm
 from fetch_members import fetch_members
+from pre_process import pre_process
+from upload import upload_sftp
 
-# --- Parse arguments ---
-parser = argparse.ArgumentParser(description="Generate and publish the Yedidya member list.")
-parser.add_argument(
-    "--site",
-    choices=["staging", "production"],
-    default=None,
-    help="Target site: staging or production",
-)
-args = parser.parse_args()
+KEYRING_SERVICE = 'YedidyaPortal'
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-if args.site is None:
-    print("Usage:")
-    print("  python run.py --site staging      run against the staging site")
-    print("  python run.py --site production   generate PDF and prompt before uploading")
-    sys.exit(0)
 
-# --- Load environment file for selected site ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-env_file = os.path.join(script_dir, f".env.{args.site}")
+# ---------------------------------------------------------------------------
+# Credential helpers
+# ---------------------------------------------------------------------------
 
-if not os.path.exists(env_file):
-    print(f"Error: {env_file} not found. Create it from .env.example.")
-    sys.exit(1)
+def _get_or_prompt(key, label, sensitive=False):
+    """Return stored credential, or prompt and save if missing."""
+    value = keyring.get_password(KEYRING_SERVICE, key)
+    if not value:
+        if sensitive:
+            value = getpass.getpass(f"{label}: ")
+        else:
+            value = input(f"{label}: ").strip()
+        if value:
+            keyring.set_password(KEYRING_SERVICE, key, value)
+    return value or ''
 
-load_dotenv(env_file)
 
-SFTP_HOST = os.getenv("SFTP_HOST", "")
-SFTP_USER = os.getenv("SFTP_USER", "")
-SFTP_REMOTE_PATH = os.getenv("SFTP_REMOTE_PATH", "/srv/htdocs/wp-content/uploads/members_list.pdf")
+def _load_credentials():
+    print("Checking credentials...")
+    wp_url       = _get_or_prompt('wp_url',       'WordPress URL')
+    wp_user      = _get_or_prompt('wp_user',      'WordPress username')
+    wp_password  = _get_or_prompt('wp_password',  'WordPress application password', sensitive=True)
+    sftp_host    = _get_or_prompt('sftp_host',    'SFTP host')
+    sftp_user    = _get_or_prompt('sftp_user',    'SFTP username')
+    sftp_password = _get_or_prompt('sftp_password', 'SFTP password', sensitive=True)
+    return wp_url, wp_user, wp_password, sftp_host, sftp_user, sftp_password
 
-SCRIPT_DIR = script_dir
-PDF_LOCAL = os.path.join(SCRIPT_DIR, "members_list.pdf")
 
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+def _prompt_path(label, action, key):
+    """Show current default, let user accept or override. Saves new value."""
+    current = dm.get(action, key)
+    display = f" [{current}]" if current else ""
+    value = input(f"{label}{display}: ").strip()
+    if not value:
+        return current
+    if value != current:
+        dm.set_default(action, key, value)
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
 
 def step(n, total, label):
-    print(f"[{n}/{total}] {label}")
+    print(f"\n[{n}/{total}] {label}")
 
 
-def run_script(filename):
-    result = subprocess.run(
-        [sys.executable, filename],
-        cwd=SCRIPT_DIR,
-        capture_output=True,
-        text=True,
+def _load_generator():
+    spec = importlib.util.spec_from_file_location(
+        "memberlist_generator",
+        os.path.join(SCRIPT_DIR, "MemberList Generator.py")
     )
-    if result.returncode != 0:
-        error = result.stderr.strip() or result.stdout.strip() or "(no output)"
-        raise RuntimeError(f"{filename} failed:\n{error}")
-    return result.stdout.strip()
-
-
-def upload_pdf(sftp_password):
-    if not SFTP_HOST or not SFTP_USER or not sftp_password:
-        raise ValueError("Missing SFTP credentials. Check SFTP_HOST and SFTP_USER in .env")
-
-    if not os.path.exists(PDF_LOCAL):
-        raise FileNotFoundError(f"PDF not found at {PDF_LOCAL}")
-
-    transport = paramiko.Transport((SFTP_HOST, 22))
-    transport.connect(username=SFTP_USER, password=sftp_password)
-    sftp = paramiko.SFTPClient.from_transport(transport)
-    try:
-        sftp.put(PDF_LOCAL, SFTP_REMOTE_PATH)
-    finally:
-        sftp.close()
-        transport.close()
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def main():
-    is_production = args.site == "production"
+    print("Yedidya Members List Generator")
+    print("=" * 34)
+
+    wp_url, wp_user, wp_password, sftp_host, sftp_user, sftp_password = _load_credentials()
+
+    print("\nFile paths (press Enter to accept defaults):")
+    raw_csv_path       = _prompt_path("Raw CSV output",    'members_list', 'raw_csv_path')
+    processed_csv_path = _prompt_path("Processed CSV",     'members_list', 'processed_csv_path')
+    pdf_path           = _prompt_path("PDF output",        'members_list', 'pdf_path')
+    sftp_remote_path   = _prompt_path("SFTP remote path",  'members_list', 'sftp_remote_path')
     total = 4
 
-    print(f"Site: {args.site.upper()}")
-    print()
-
-    wp_password = getpass.getpass("WordPress Application Password: ")
-    sftp_password = None if is_production else getpass.getpass("SFTP Password: ")
-    print()
-
-    # Step 1 — Fetch members
+    # Step 1 — Fetch
     step(1, total, "Fetching members from WordPress...")
     try:
-        count = fetch_members(wp_password)
-        print(f"✓ Fetched {count} members")
+        count = fetch_members(wp_url, wp_user, wp_password, raw_csv_path)
+        print(f"  ✓ Fetched {count} members")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"  Error: {e}")
         sys.exit(1)
 
-    # Step 2 — Pre-process CSV
+    # Step 2 — Pre-process
     step(2, total, "Pre-processing CSV...")
     try:
-        out = run_script("pre_process.py")
-        print(f"✓ {out}" if out else "✓ Pre-processing complete")
-    except RuntimeError as e:
-        print(f"Error: {e}")
+        count = pre_process(raw_csv_path, processed_csv_path)
+        print(f"  ✓ Processed {count} entries")
+    except Exception as e:
+        print(f"  Error: {e}")
         sys.exit(1)
 
     # Step 3 — Generate PDF
     step(3, total, "Generating PDF...")
     try:
-        out = run_script("MemberList Generator.py")
-        print(f"✓ {out}" if out else "✓ PDF generated: members_list.pdf")
-    except RuntimeError as e:
-        print(f"Error: {e}")
+        generator = _load_generator()
+        generator.generate_pdf(processed_csv_path, pdf_path, fonts_dir=SCRIPT_DIR)
+        print(f"  ✓ PDF generated: {pdf_path}")
+    except Exception as e:
+        print(f"  Error: {e}")
         sys.exit(1)
 
-    # Step 4 — Upload via SFTP
-    if is_production:
-        # Open PDF for review before uploading
-        print(f"\nPDF ready: {PDF_LOCAL}")
-        os.startfile(PDF_LOCAL)
-        answer = input("Upload to production? [y/N]: ").strip().lower()
-        if answer != "y":
-            print("Upload cancelled.")
-            print("\nDone.")
-            return
-        sftp_password = getpass.getpass("SFTP Password: ")
-        print()
+    # Step 4 — Upload
+    print(f"\nPDF ready: {pdf_path}")
+    try:
+        os.startfile(pdf_path)
+    except Exception:
+        pass
+    answer = input("Upload to server? [y/N]: ").strip().lower()
+    if answer != "y":
+        print("Upload cancelled.")
+        print("\nDone.")
+        return
 
     step(4, total, "Uploading to server...")
     try:
-        upload_pdf(sftp_password)
-        print(f"✓ Uploaded to {SFTP_REMOTE_PATH}")
+        upload_sftp(pdf_path, sftp_host, sftp_user, sftp_password, sftp_remote_path)
+        print(f"  ✓ Uploaded to {sftp_remote_path}")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"  Error: {e}")
         sys.exit(1)
 
     print("\nDone.")

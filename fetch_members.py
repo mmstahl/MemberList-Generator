@@ -1,34 +1,23 @@
-import os
 import csv
-import getpass
 import requests
-from dotenv import load_dotenv
 
 COLUMNS = [
     "user_login", "user_email", "first_name", "last_name",
-    "partnerfirst", "partnerlast", "partneremail",
+    "havepartner", "partnerfirst", "partnerlast", "partneremail",
     "cellphone1", "partnerphone", "homephone",
     "home_address", "yourgender", "partnergender",
     "contact_list_privacy_setting", "privacy_approval",
+    "user_status",
 ]
 
-OUTPUT_FILE = "members data raw.csv"
+API_ENDPOINT = '/wp-json/yedidya/v1/members'
 
 
-def fetch_members(wp_password):
-    wp_url = os.getenv("WP_URL", "").rstrip("/")
-    wp_user = os.getenv("WP_USER", "")
+def fetch_members(wp_url, wp_user, wp_password, output_path):
+    """Fetch members from WordPress and write to CSV. Returns member count."""
+    endpoint = f"{wp_url.rstrip('/')}{API_ENDPOINT}"
 
-    if not wp_url or not wp_user or not wp_password:
-        raise ValueError("Missing credentials. Check WP_URL and WP_USER in .env")
-
-    endpoint = f"{wp_url}/wp-json/yedidya/v1/members"
-
-    response = requests.get(
-        endpoint,
-        auth=(wp_user, wp_password),
-        timeout=30,
-    )
+    response = requests.get(endpoint, auth=(wp_user, wp_password), timeout=30)
 
     if response.status_code == 401:
         raise ConnectionError("401 Unauthorized — wrong username or password")
@@ -41,9 +30,6 @@ def fetch_members(wp_password):
 
     members = response.json()
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = os.path.join(script_dir, OUTPUT_FILE)
-
     with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore")
         writer.writeheader()
@@ -53,7 +39,18 @@ def fetch_members(wp_password):
 
 
 if __name__ == "__main__":
-    load_dotenv()
-    password = getpass.getpass("WordPress Application Password: ")
-    count = fetch_members(password)
-    print(f"✓ Fetched {count} members from WordPress → {OUTPUT_FILE}")
+    import sys
+    import keyring
+    import defaults_manager as dm
+
+    wp_url      = keyring.get_password('YedidyaPortal', 'wp_url') or ''
+    wp_user     = keyring.get_password('YedidyaPortal', 'wp_user') or ''
+    wp_password = keyring.get_password('YedidyaPortal', 'wp_password') or ''
+
+    if not wp_url or not wp_user or not wp_password:
+        print("WordPress credentials not found in Credential Manager. Run run.py first.")
+        sys.exit(1)
+
+    output_path = dm.get('members_list', 'raw_csv_path')
+    count = fetch_members(wp_url, wp_user, wp_password, output_path)
+    print(f"✓ Fetched {count} members → {output_path}")

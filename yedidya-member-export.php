@@ -23,6 +23,7 @@ function yedidya_check_permission() {
 
 function yedidya_get_members( $request ) {
     $meta_keys = array(
+        'havepartner',
         'partnerfirst',
         'partnerlast',
         'partneremail',
@@ -55,6 +56,7 @@ function yedidya_get_members( $request ) {
             'user_email'                    => $user->user_email,
             'first_name'                    => get_user_meta( $user->ID, 'first_name', true ) ?: '',
             'last_name'                     => get_user_meta( $user->ID, 'last_name', true ) ?: '',
+            'havepartner'                   => $meta['havepartner'],
             'partnerfirst'                  => $meta['partnerfirst'],
             'partnerlast'                   => $meta['partnerlast'],
             'partneremail'                  => $meta['partneremail'],

@@ -1,0 +1,11 @@
+# Member data — contains personal details, never commit
+*.csv
+*.pdf
+
+# Local backups and shortcuts
+.env.bkp
+*.lnk
+
+# Python
+__pycache__/
+*.py[cod]
