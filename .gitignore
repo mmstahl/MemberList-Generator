@@ -9,3 +9,7 @@
 # Python
 __pycache__/
 *.py[cod]
+
+# Local environment config (not used by the code; see .env.example)
+.env*
+!.env.example
